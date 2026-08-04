@@ -1001,7 +1001,7 @@ table.funnel-table th { color: var(--text-muted); font-weight: 500; font-size: 1
         kpiRowEl.appendChild(kpiTile('Applications', fmtInt(d.n), `${fmtInt(d.closed.length)} closed · ${fmtInt(d.open.length)} open`));
         kpiRowEl.appendChild(kpiTile('Hire rate', fmtPct(d.hireRate), `${fmtInt(d.hired.length)} hired of ${fmtInt(d.closed.length)} closed`));
         kpiRowEl.appendChild(kpiTile('Median time-to-hire', fmtDays(d.medianTTH), d.avgTTH != null ? `avg ${fmtDays(d.avgTTH)}` : null));
-        kpiRowEl.appendChild(kpiTile('Offer acceptance rate', d.offerAcceptRate != null ? fmtPct(d.offerAcceptRate) : '—', `of ${fmtInt(d.closedWithProposal.length)} offers made`));
+        kpiRowEl.appendChild(kpiTile('Offer acceptance rate', d.offerAcceptRate != null ? fmtPct(d.offerAcceptRate) : '—', `of ${fmtInt(d.closedWithProposal.length)} proposal sent`));
       }
 
       drawMap(d);
