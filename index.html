@@ -543,6 +543,31 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
     }
   }
 
+  // Time between a case's FIRST arrival at First Interview and its FIRST
+  // arrival at Second Interview afterward — cumulative through any
+  // intervening status, same style as ttfiByCase, but here only the very
+  // first First Interview marks the start (a later rework/repeat First
+  // Interview does NOT reset it — this is literally "how long from the
+  // first interview to the second one", not "from the most recent one").
+  // Cases where Second Interview appears with no prior First Interview
+  // logged are excluded, same defensive posture as the other two maps.
+  const firstToSecondInterviewByCase = new Map();
+  {
+    const fiIdx = statusIdx['First Interview'], siIdx = statusIdx['Second Interview'];
+    let curCase = null, sinceFirst = null, done = false;
+    for (const [cid, , toIdx, hours] of FULL_TRANSITIONS) {
+      if (cid !== curCase) { curCase = cid; sinceFirst = null; done = false; }
+      if (done) continue;
+      if (sinceFirst !== null) sinceFirst += hours;
+      if (toIdx === fiIdx && sinceFirst === null) {
+        sinceFirst = 0;
+      } else if (toIdx === siIdx && sinceFirst !== null) {
+        firstToSecondInterviewByCase.set(cid, sinceFirst);
+        done = true;
+      }
+    }
+  }
+
   // Time between a case's LAST interview (First or Second, whichever it was
   // still at most recently — a case can revisit First Interview after
   // Second, per the same backward-correction possibility duration_days
@@ -1811,6 +1836,12 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
       chartTitle: 'Time to first interview analysis', populationLabel: 'interviewed cases',
       population: filtered => filtered.filter(r => ttfiByCase.has(r[0])),
       outcome: r => { const h = ttfiByCase.get(r[0]); return h == null ? null : h / 24; },
+    },
+    {
+      id: 'fsi', label: 'Time from first to second interview', short: 'time from first to second interview',
+      chartTitle: 'Time from first to second interview analysis', populationLabel: 'cases with both interviews',
+      population: filtered => filtered.filter(r => firstToSecondInterviewByCase.has(r[0])),
+      outcome: r => { const h = firstToSecondInterviewByCase.get(r[0]); return h == null ? null : h / 24; },
     },
     {
       id: 'litp', label: 'Time from interview to proposal', short: 'time from interview to proposal',
