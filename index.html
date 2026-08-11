@@ -543,6 +543,35 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
     }
   }
 
+  // Time between a case's LAST interview (First or Second, whichever it was
+  // still at most recently — a case can revisit First Interview after
+  // Second, per the same backward-correction possibility duration_days
+  // already tolerates) and Proposal sent. Walks each case's chain the same
+  // way as ttfiByCase above, but the counter resets to 0 every time an edge
+  // lands on First OR Second Interview (so only time since the LATEST
+  // interview counts, even through an intervening non-interview status like
+  // On Hold), and is recorded — then locked — the first time Proposal sent
+  // is reached after at least one interview. Cases that reach Proposal sent
+  // with no interview logged first (shouldn't happen, but not assumed) are
+  // simply absent from the map, same as ttfiByCase for cases with no
+  // interview at all.
+  const lastInterviewToProposalByCase = new Map();
+  {
+    const fiIdx = statusIdx['First Interview'], siIdx = statusIdx['Second Interview'];
+    let curCase = null, sinceInterview = null, done = false;
+    for (const [cid, , toIdx, hours] of FULL_TRANSITIONS) {
+      if (cid !== curCase) { curCase = cid; sinceInterview = null; done = false; }
+      if (done) continue;
+      if (sinceInterview !== null) sinceInterview += hours;
+      if (toIdx === fiIdx || toIdx === siIdx) {
+        sinceInterview = 0;
+      } else if (toIdx === proposalSentIdx && sinceInterview !== null) {
+        lastInterviewToProposalByCase.set(cid, sinceInterview);
+        done = true;
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- shared filter state
   function newFilterState() {
     return { entity: new Set(), fg: new Set(), loc: new Set(), cluster: new Set(), outcome: new Set(), dateStart: null, dateEnd: null };
@@ -1782,6 +1811,12 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
       chartTitle: 'Time to first interview analysis', populationLabel: 'interviewed cases',
       population: filtered => filtered.filter(r => ttfiByCase.has(r[0])),
       outcome: r => { const h = ttfiByCase.get(r[0]); return h == null ? null : h / 24; },
+    },
+    {
+      id: 'litp', label: 'Time from interview to proposal', short: 'time from interview to proposal',
+      chartTitle: 'Time from interview to proposal analysis', populationLabel: 'cases reaching Proposal sent',
+      population: filtered => filtered.filter(r => lastInterviewToProposalByCase.has(r[0])),
+      outcome: r => { const h = lastInterviewToProposalByCase.get(r[0]); return h == null ? null : h / 24; },
     },
   ];
 
