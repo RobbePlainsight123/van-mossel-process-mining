@@ -268,7 +268,7 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
 .rc-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; flex-wrap: wrap; }
 .rc-targets { display: flex; align-items: center; gap: 6px; }
 .rc-q { font-family: var(--font-head); font-weight: 700; font-size: 12.5px; color: var(--ps-blue); margin-right: 2px; }
-.rc-tab { border: 1px solid var(--ps-blue-18); background: var(--ps-white); border-radius: 999px; padding: 6px 14px; cursor: default; font-family: var(--font-head); font-weight: 600; font-size: 12px; color: var(--ps-blue-55); }
+.rc-tab { border: 1px solid var(--ps-blue-18); background: var(--ps-white); border-radius: 999px; padding: 6px 14px; cursor: pointer; font-family: var(--font-head); font-weight: 600; font-size: 12px; color: var(--ps-blue-55); }
 .rc-tab.on { background: var(--ps-blue); border-color: var(--ps-blue); color: var(--ps-cream); }
 .rc-modes { display: flex; gap: 2px; background: var(--ps-blue-08); padding: 3px; border-radius: 999px; }
 .rc-mode { border: 0; background: transparent; border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--ps-blue-55); font-family: var(--font-body); }
@@ -520,6 +520,28 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
   // Hidden from the map entirely rather than shown standalone.
   const ftaRefusedIdx = statusIdx['FTA Refused'];
   const STAGE_GROUP = [0, 0, 0, 1, 1, 2, 3];
+
+  // Time to first interview, per case: cumulative elapsed hours from that
+  // case's very first logged event up through its first arrival at First
+  // Interview — same "from application to X" shape as duration_days (which
+  // is first event to LAST event), just stopping at first interview instead
+  // of case close. Built once here (used by the Root Cause tab) by walking
+  // FULL_TRANSITIONS in order and summing each case's edges until the first
+  // one that lands on First Interview — relies on each case's edges being
+  // contiguous and chronological in FULL_TRANSITIONS, which build_funnel_data.py
+  // guarantees (same assumption the AI Opportunities/Insights "first match
+  // wins" lookups already make elsewhere in this file).
+  const ttfiByCase = new Map();
+  {
+    const fiIdx = statusIdx['First Interview'];
+    let curCase = null, cum = 0, reached = false;
+    for (const [cid, , toIdx, hours] of FULL_TRANSITIONS) {
+      if (cid !== curCase) { curCase = cid; cum = 0; reached = false; }
+      if (reached) continue;
+      cum += hours;
+      if (toIdx === fiIdx) { ttfiByCase.set(cid, cum); reached = true; }
+    }
+  }
 
   // ---------------------------------------------------------------- shared filter state
   function newFilterState() {
@@ -1742,14 +1764,35 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
     factors.push({ label: 'Had a repeated/duplicate status logged', type: 'Data quality', test: r => r[10] > 0 });
     return factors;
   }
-  function computeInfluencers(filtered, direction) {
-    const hired = filtered.filter(r => r[6] === 1 && r[8] === 'Candidate Accepted');
+  // Root Cause tab's outcome choices — each pairs a population (who's eligible
+  // to have this outcome at all) with an outcome extractor (the day value to
+  // test). Time-to-hire is scoped to hired cases only (it's meaningless
+  // otherwise); time to first interview is scoped to any case that reached an
+  // interview, hired or not, which is both the more natural population for
+  // that question and a much bigger n (interviews vastly outnumber hires).
+  const RC_TARGETS = [
+    {
+      id: 'tth', label: 'Time-to-hire', short: 'time-to-hire',
+      chartTitle: 'Time-to-hire analysis', populationLabel: 'hired cases',
+      population: filtered => filtered.filter(r => r[6] === 1 && r[8] === 'Candidate Accepted'),
+      outcome: r => r[9],
+    },
+    {
+      id: 'ttfi', label: 'Time to first interview', short: 'time to first interview',
+      chartTitle: 'Time to first interview analysis', populationLabel: 'interviewed cases',
+      population: filtered => filtered.filter(r => ttfiByCase.has(r[0])),
+      outcome: r => { const h = ttfiByCase.get(r[0]); return h == null ? null : h / 24; },
+    },
+  ];
+
+  function computeInfluencers(filtered, direction, target) {
+    const population = target.population(filtered);
     const results = [];
     let tested = 0;
     for (const f of candidateFactors()) {
-      const withF = hired.filter(f.test), withoutF = hired.filter(r => !f.test(r));
-      const dW = withF.map(r => r[9]).filter(d => d != null);
-      const dO = withoutF.map(r => r[9]).filter(d => d != null);
+      const withF = population.filter(f.test), withoutF = population.filter(r => !f.test(r));
+      const dW = withF.map(target.outcome).filter(d => d != null);
+      const dO = withoutF.map(target.outcome).filter(d => d != null);
       if (dW.length < 10 || dO.length < 10) continue;
       tested++;
       const test = mannWhitneyU(dW, dO);
@@ -1774,13 +1817,13 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
     const screenCol = document.createElement('section'); screenCol.className = 'screen-col';
     main.appendChild(screenCol);
     const rcBar = document.createElement('div'); rcBar.className = 'rc-bar';
-    rcBar.innerHTML = `<div class="rc-targets"><span class="rc-q">What influences</span><button type="button" class="rc-tab on">Time-to-hire</button></div>
+    rcBar.innerHTML = `<div class="rc-targets"><span class="rc-q">What influences</span>${RC_TARGETS.map(t => `<button type="button" class="rc-tab${t.id === RC_TARGETS[0].id ? ' on' : ''}" data-target="${t.id}">${t.label}</button>`).join('')}</div>
       <div class="rc-modes"><button type="button" class="rc-mode on" data-dir="increase">Increases ▲</button><button type="button" class="rc-mode" data-dir="decrease">Decreases ▼</button></div>`;
     screenCol.appendChild(rcBar);
     const split = document.createElement('div'); split.className = 'rc-split'; screenCol.appendChild(split);
 
     const listCard = document.createElement('div'); listCard.className = 'card rc-list-card';
-    listCard.innerHTML = `<div class="card-head"><h3>Key influencers</h3><span class="hint">time-to-hire</span></div>`;
+    listCard.innerHTML = `<div class="card-head"><h3>Key influencers</h3><span class="hint rc-list-hint">time-to-hire</span></div>`;
     const listBody = document.createElement('div'); listBody.className = 'card-body'; listCard.appendChild(listBody);
     split.appendChild(listCard);
 
@@ -1790,22 +1833,30 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
     const expCard = document.createElement('div'); expCard.className = 'card rc-exp-card';
     split.appendChild(expCard);
 
-    let direction = 'increase', selectedIdx = 0, selBar = 0;
+    let direction = 'increase', selectedIdx = 0, selBar = 0, target = RC_TARGETS[0];
     rcBar.querySelectorAll('.rc-mode').forEach(btn => {
       btn.addEventListener('click', () => {
         rcBar.querySelectorAll('.rc-mode').forEach(b => b.classList.remove('on'));
         btn.classList.add('on'); direction = btn.dataset.dir; selectedIdx = 0; renderAll();
       });
     });
+    rcBar.querySelectorAll('.rc-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        rcBar.querySelectorAll('.rc-tab').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on'); target = RC_TARGETS.find(t => t.id === btn.dataset.target);
+        selectedIdx = 0; selBar = 0; renderAll();
+      });
+    });
 
     function renderAll() {
       const filtered = ROWS.filter(r => passesFor(sharedState, r));
-      const { results, tested, totalFactors } = computeInfluencers(filtered, direction);
+      const { results, tested, totalFactors } = computeInfluencers(filtered, direction, target);
       const list = results.slice(0, 10);
 
+      listCard.querySelector('.rc-list-hint').textContent = target.short;
       listBody.innerHTML = '';
       const head = document.createElement('div'); head.className = 'rc-list-head';
-      head.innerHTML = `<span>When…</span><span>…time-to-hire ${direction === 'increase' ? 'rises' : 'falls'} by</span>`;
+      head.innerHTML = `<span>When…</span><span>…${target.short} ${direction === 'increase' ? 'rises' : 'falls'} by</span>`;
       listBody.appendChild(head);
       if (!list.length) {
         listBody.innerHTML += `<div class="empty">No clear ${direction === 'increase' ? 'risk' : 'protective'} drivers in scope.</div>`;
@@ -1827,10 +1878,10 @@ h1,h2,h3,h4 { font-family: var(--font-head); margin: 0; }
         expCard.innerHTML = `<div class="card-body"><div class="empty">Pick a bar to see its process map.</div></div>`;
         return;
       }
-      chartCard.innerHTML = `<div class="card-head"><h3>Time-to-hire analysis</h3><span class="hint">${fmtInt(active.nW + active.nO)} hired cases</span></div>`;
+      chartCard.innerHTML = `<div class="card-head"><h3>${target.chartTitle}</h3><span class="hint">${fmtInt(active.nW + active.nO)} ${target.populationLabel}</span></div>`;
       const cbody = document.createElement('div'); cbody.className = 'card-body';
       const sign = active.delta > 0 ? '+' : '';
-      cbody.innerHTML = `<p class="rc-headline"><b>Time-to-hire</b> is ${active.delta > 0 ? 'longer' : 'shorter'} when <b>${active.label}</b> (${active.type}) than otherwise — <b>${sign}${fmt1(active.delta)}d avg</b> difference (median ${active.medDelta > 0 ? '+' : ''}${fmt1(active.medDelta)}d).</p>`;
+      cbody.innerHTML = `<p class="rc-headline"><b>${target.label}</b> is ${active.delta > 0 ? 'longer' : 'shorter'} when <b>${active.label}</b> (${active.type}) than otherwise — <b>${sign}${fmt1(active.delta)}d avg</b> difference (median ${active.medDelta > 0 ? '+' : ''}${fmt1(active.medDelta)}d).</p>`;
       const barsEl = document.createElement('div'); barsEl.className = 'rc-bars';
       const bars = [
         { label: 'With ' + active.label, n: active.nW, match: active.factor.test },
